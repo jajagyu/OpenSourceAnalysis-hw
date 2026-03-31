@@ -25,11 +25,13 @@ public:
 
   void Put(int key, const std::string& value);
   bool Get(int key, std::string* out_value) const;
+  bool GetLatestEntry(int key, RangeEntry* out_entry) const;
   bool Delete(int key);
   std::vector<std::pair<int, std::string>>
   RangeScan(int start_key,
             int end_key) const; // skiplist 내부 range scan와 memdb range
                                 // scan의 차이를 고려하여 설계
+  std::vector<RangeEntry> RangeScanEntries(int start_key, int end_key) const;
 private:
   struct Node {
     int key;

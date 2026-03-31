@@ -62,7 +62,7 @@ int SkipList::RandomLevel() {
 // sequence number 필요
 void SkipList::Put(int key, const std::string& value) {
   std::vector<Node*> update(max_level_, nullptr);
-  Node* x = FindGreaterOrEqual(key, 0, &update);
+  FindGreaterOrEqual(key, 0, &update);
   
   // Always insert new node with new sequence number (out-of-place update)
   int new_level = RandomLevel();
@@ -103,104 +103,114 @@ void SkipList::Put(int key, const std::string& value) {
 // SkipList에 서 key에 해당하는 value 찾기. 존재하면 true, 없으면 (tombstone
 // 고려) false 반환. value는 out_value에 저장
 bool SkipList::Get(int key, std::string* out_value) const {
-  Node* x = FindGreaterOrEqual(key, 0, nullptr);
-  
-  // Find the bottom level node with this key
-  while (x != nullptr && x->down != nullptr && x->key == key) {
-    x = x->down;
+  RangeEntry latest;
+  if (!GetLatestEntry(key, &latest)) {
+    return false;
   }
-  
-  // Now iterate through same-key nodes to find the latest non-tombstone version
-  int64_t max_seq = -1;
-  std::string result_value;
-  bool found = false;
-  
+
+  if (latest.tombstone) {
+    return false;
+  }
+
+  *out_value = latest.value;
+  return true;
+}
+
+bool SkipList::GetLatestEntry(int key, RangeEntry* out_entry) const {
+  Node* x = FindGreaterOrEqual(key, 0, nullptr);
+  if (x == nullptr || x->key != key) {
+    return false;
+  }
+
+  Node* latest = x;
   while (x != nullptr && x->key == key) {
-    if (!x->tombstone && x->seq > max_seq) {
-      max_seq = x->seq;
-      result_value = x->value;
-      found = true;
+    if (x->seq > latest->seq) {
+      latest = x;
     }
     x = x->next;
   }
-  
-  if (found) {
-    *out_value = result_value;
-    return true;
+
+  if (out_entry != nullptr) {
+    out_entry->key = latest->key;
+    out_entry->value = latest->value;
+    out_entry->tombstone = latest->tombstone;
   }
-  
-  return false;
+  return true;
 }
 
 // SkipList Delete operation. Tombstone으로 삭제 진행
 bool SkipList::Delete(int key) {
-  Node* x = FindGreaterOrEqual(key, 0, nullptr);
-  
-  // Find the bottom level node with this key
-  while (x != nullptr && x->down != nullptr && x->key == key) {
-    x = x->down;
+  RangeEntry latest;
+  bool existed_non_tombstone =
+      GetLatestEntry(key, &latest) && !latest.tombstone;
+
+  std::vector<Node*> update(max_level_, nullptr);
+  FindGreaterOrEqual(key, 0, &update);
+
+  int new_level = RandomLevel();
+  if (new_level > max_level_) {
+    new_level = max_level_;
   }
-  
-  // Find the latest non-tombstone version and mark it as tombstone
-  int64_t max_seq = -1;
-  Node* target = nullptr;
-  
-  while (x != nullptr && x->key == key) {
-    if (!x->tombstone && x->seq > max_seq) {
-      max_seq = x->seq;
-      target = x;
-    }
-    x = x->next;
+
+  Node* down = nullptr;
+  for (int i = 0; i < new_level; ++i) {
+    Node* node = new Node();
+    node->key = key;
+    node->seq = next_seq_;
+    node->value = "";
+    node->tombstone = true;
+    node->down = down;
+    node->next = update[i]->next;
+    update[i]->next = node;
+    down = node;
   }
-  
-  if (target != nullptr) {
-    target->tombstone = true;
-    return true;
-  }
-  
-  return false;
+
+  ++next_seq_;
+  return existed_non_tombstone;
 }
 
 // SkipList range scan operation. 해당하는 노드를 vector에 모아 반환
 std::vector<std::pair<int, std::string>>
 SkipList::RangeScan(int start_key, int end_key) const {
   std::vector<std::pair<int, std::string>> out;
-  
-  Node* x = FindGreaterOrEqual(start_key, 0, nullptr);
-  
-  // Find the bottom level
-  while (x != nullptr && x->down != nullptr) {
-    x = x->down;
+  std::vector<RangeEntry> entries = RangeScanEntries(start_key, end_key);
+  for (const auto& e : entries) {
+    if (!e.tombstone) {
+      out.push_back({e.key, e.value});
+    }
   }
-  
-  // Traverse and collect nodes
-  std::map<int, std::pair<int64_t, std::string>> result_map;
+  return out;
+}
+
+std::vector<SkipList::RangeEntry>
+SkipList::RangeScanEntries(int start_key, int end_key) const {
+  std::vector<RangeEntry> out;
+
+  if (start_key > end_key) {
+    return out;
+  }
+
+  Node* x = FindGreaterOrEqual(start_key, 0, nullptr);
+
+  std::map<int, std::pair<int64_t, RangeEntry>> result_map;
   while (x != nullptr && x->key <= end_key) {
     if (x->key >= start_key) {
-      // Keep the latest non-tombstone version of each key
       auto it = result_map.find(x->key);
-      if (it == result_map.end()) {
-        if (!x->tombstone) {
-          result_map[x->key] = {x->seq, x->value};
-        }
-      } else {
-        // Update if this version is newer
-        if (!x->tombstone && x->seq > it->second.first) {
-          it->second = {x->seq, x->value};
-        } else if (x->tombstone && x->seq > it->second.first) {
-          // Mark as deleted with higher seq
-          result_map.erase(it);
-        }
+      if (it == result_map.end() || x->seq > it->second.first) {
+        RangeEntry entry;
+        entry.key = x->key;
+        entry.value = x->value;
+        entry.tombstone = x->tombstone;
+        result_map[x->key] = {x->seq, entry};
       }
     }
     x = x->next;
   }
-  
-  // Convert to vector
+
   for (const auto& pair : result_map) {
-    out.push_back({pair.first, pair.second.second});
+    out.push_back(pair.second.second);
   }
-  
+
   return out;
 }
 

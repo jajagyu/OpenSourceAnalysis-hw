@@ -26,14 +26,24 @@ void InMemoryDB::Put(int key, const std::string& value) {
 
 // Get operation 구현
 bool InMemoryDB::Get(int key, std::string* out_value) const {
+  SkipList::RangeEntry entry;
+
   // First check mutable memtable
-  if (mutable_->list.Get(key, out_value)) {
+  if (mutable_->list.GetLatestEntry(key, &entry)) {
+    if (entry.tombstone) {
+      return false;
+    }
+    *out_value = entry.value;
     return true;
   }
   
   // Then check immutable memtables in reverse order (most recent first)
   for (auto it = immutables_.rbegin(); it != immutables_.rend(); ++it) {
-    if ((*it)->list.Get(key, out_value)) {
+    if ((*it)->list.GetLatestEntry(key, &entry)) {
+      if (entry.tombstone) {
+        return false;
+      }
+      *out_value = entry.value;
       return true;
     }
   }
@@ -43,26 +53,41 @@ bool InMemoryDB::Get(int key, std::string* out_value) const {
 
 // Delete operation 구현. Tombstone 사용
 void InMemoryDB::Delete(int key) {
+  size_t entry_bytes = sizeof(key);
+  EnsureMutableCapacity(entry_bytes);
   mutable_->list.Delete(key);
+  mutable_->size_bytes += entry_bytes;
 }
 
 // RangeScan operation 구현
 std::vector<std::pair<int, std::string>>
 InMemoryDB::RangeScan(int start_key, int end_key) const {
   std::map<int, std::string> result;
-  
-  // Scan immutable memtables first (oldest first)
-  for (auto it = immutables_.begin(); it != immutables_.end(); ++it) {
-    std::vector<std::pair<int, std::string>> scan = (*it)->list.RangeScan(start_key, end_key);
-    for (const auto& pair : scan) {
-      result[pair.first] = pair.second;
+  std::unordered_set<int> decided;
+
+  // Newest mutable first: first seen key decides (value or tombstone).
+  std::vector<SkipList::RangeEntry> mutable_entries =
+      mutable_->list.RangeScanEntries(start_key, end_key);
+  for (const auto& e : mutable_entries) {
+    decided.insert(e.key);
+    if (!e.tombstone) {
+      result[e.key] = e.value;
     }
   }
-  
-  // Then scan mutable memtable (most recent)
-  std::vector<std::pair<int, std::string>> mutable_scan = mutable_->list.RangeScan(start_key, end_key);
-  for (const auto& pair : mutable_scan) {
-    result[pair.first] = pair.second;
+
+  // Then older immutable memtables from newest to oldest.
+  for (auto it = immutables_.rbegin(); it != immutables_.rend(); ++it) {
+    std::vector<SkipList::RangeEntry> entries =
+        (*it)->list.RangeScanEntries(start_key, end_key);
+    for (const auto& e : entries) {
+      if (decided.find(e.key) != decided.end()) {
+        continue;
+      }
+      decided.insert(e.key);
+      if (!e.tombstone) {
+        result[e.key] = e.value;
+      }
+    }
   }
   
   std::vector<std::pair<int, std::string>> out;
