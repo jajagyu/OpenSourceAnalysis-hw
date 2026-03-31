@@ -13,6 +13,8 @@ SkipList::SkipList(int max_level, float p)
   head_->seq = 0;
   head_->value = "";
   head_->tombstone = false;
+  head_->next = nullptr;
+  head_->down = nullptr;
   
   Node* curr = head_;
   for (int i = 1; i < max_level_; ++i) {
@@ -101,8 +103,7 @@ void SkipList::Put(int key, const std::string& value) {
 // SkipList에 서 key에 해당하는 value 찾기. 존재하면 true, 없으면 (tombstone
 // 고려) false 반환. value는 out_value에 저장
 bool SkipList::Get(int key, std::string* out_value) const {
-  std::vector<Node*> unused;
-  Node* x = FindGreaterOrEqual(key, 0, &unused);
+  Node* x = FindGreaterOrEqual(key, 0, nullptr);
   
   // Find the bottom level node with this key
   while (x != nullptr && x->down != nullptr && x->key == key) {
@@ -133,8 +134,7 @@ bool SkipList::Get(int key, std::string* out_value) const {
 
 // SkipList Delete operation. Tombstone으로 삭제 진행
 bool SkipList::Delete(int key) {
-  std::vector<Node*> unused;
-  Node* x = FindGreaterOrEqual(key, 0, &unused);
+  Node* x = FindGreaterOrEqual(key, 0, nullptr);
   
   // Find the bottom level node with this key
   while (x != nullptr && x->down != nullptr && x->key == key) {
@@ -166,8 +166,7 @@ std::vector<std::pair<int, std::string>>
 SkipList::RangeScan(int start_key, int end_key) const {
   std::vector<std::pair<int, std::string>> out;
   
-  std::vector<Node*> unused;
-  Node* x = FindGreaterOrEqual(start_key, 0, &unused);
+  Node* x = FindGreaterOrEqual(start_key, 0, nullptr);
   
   // Find the bottom level
   while (x != nullptr && x->down != nullptr) {
@@ -208,7 +207,7 @@ SkipList::RangeScan(int start_key, int end_key) const {
 SkipList::Node* SkipList::FindGreaterOrEqual(int key, int64_t seq,
                                               std::vector<Node*>* update) const {
   Node* x = head_;
-  int level = max_level_;
+  int level = max_level_ - 1;
   
   while (x != nullptr) {
     Node* next = x->next;
@@ -217,15 +216,20 @@ SkipList::Node* SkipList::FindGreaterOrEqual(int key, int64_t seq,
       next = x->next;
     }
     
-    if (update != nullptr && level > 0) {
-      (*update)[level - 1] = x;
+    if (update != nullptr && level >= 0 &&
+        static_cast<size_t>(level) < update->size()) {
+      (*update)[level] = x;
     }
-    
+
+    if (x->down == nullptr) {
+      return x->next;
+    }
+
     x = x->down;
-    level--;
+    --level;
   }
   
-  return x;
+  return nullptr;
 }
 
 bool SkipList::Less(int a_key, int64_t a_seq, int b_key, int64_t b_seq) {
