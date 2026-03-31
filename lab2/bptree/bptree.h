@@ -25,7 +25,30 @@ public:
 private:
   struct Node;
 
-  struct Node {};
+  struct Node {
+    explicit Node(bool leaf) : is_leaf(leaf), next(nullptr) {}
+
+    bool is_leaf;
+    std::vector<int> keys;
+    std::vector<std::string> values;
+    std::vector<Node*> children;
+    Node* next;
+  };
+
+  struct SplitResult {
+    bool split;
+    int promoted_key;
+    Node* right;
+  };
+
+  void Destroy(Node* node);
+  SplitResult Insert(Node* node, int key, const std::string& value);
+  bool DeleteFromNode(Node* node, int key, bool* deleted);
+  void RefreshInternalKeys(Node* node);
+  int ChildIndex(const Node* node, int key) const;
+  Node* FindLeaf(int key) const;
+  Node* LeftmostLeaf() const;
+  void DetachLeafFromChain(Node* target);
 
   Node* root_;
   int degree_;
