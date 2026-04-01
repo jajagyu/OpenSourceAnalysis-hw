@@ -119,6 +119,11 @@ void InMemoryDB::EnsureMutableCapacity(size_t entry_bytes) {
   }
 }
 
+// 필요시 사용
+size_t InMemoryDB::ImmutableCount() const { return immutables_.size(); }
+
+size_t InMemoryDB::MutableSizeBytes() const { return mutable_->size_bytes; }
+
 size_t InMemoryDB::EntryBytes(int key, const std::string& value) const {
   return sizeof(key) + value.size();
 }

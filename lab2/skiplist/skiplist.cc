@@ -156,7 +156,7 @@ bool SkipList::Delete(int key) {
   RangeEntry latest;
   bool existed_non_tombstone =
       GetLatestEntry(key, &latest) && !latest.tombstone; //삭제하려는 key가 존재하면서 최신 버전이 tombstone이 아닌 경우 true, 그렇지 않으면 false
-
+  
   std::vector<Node*> update(max_level_, nullptr);
   FindGreaterOrEqual(key, 0, &update);
 
@@ -233,7 +233,7 @@ SkipList::RangeScanEntries(int start_key, int end_key) const {
 }
 
 // (key, seq) 이상이 처음 나오는 bottom-level 노드를 찾음
-// update가 주어지면 각 레벨에서 직전 노드를 채움
+// update가 주어지면 각 레벨에서 바로 앞 노드를 채움
 SkipList::Node* SkipList::FindGreaterOrEqual(int key, int64_t seq,
                                               std::vector<Node*>* update) const {
   Node* x = head_;

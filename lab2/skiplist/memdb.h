@@ -30,6 +30,9 @@ class InMemoryDB {
   // 모든 memtable을 최신 우선으로 병합해 범위 조회
   std::vector<std::pair<int, std::string>> RangeScan(int start_key, int end_key) const;
 
+  size_t ImmutableCount() const;
+  size_t MutableSizeBytes() const;
+
  private:
   struct MemTable {
     explicit MemTable(const MemDBOptions& options);
