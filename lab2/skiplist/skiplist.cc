@@ -72,15 +72,13 @@ void SkipList::Put(int key, const std::string& value) {
   
   // 새 노드의 레벨을 랜덤하게 결정
   int new_level = RandomLevel();
-  if (new_level > max_level_) {
-    new_level = max_level_;
-  }
+
   
 
   Node* new_node = new Node();
   new_node->key = key;
   new_node->seq = next_seq_;
-  // 실제 값은 최하위(bottom) 레벨 노드에만 저장한다.
+  // 실제 값은 최하위(bottom) 레벨 노드에만 저장
   new_node->value = value;
   new_node->tombstone = false;
   new_node->next = nullptr;
@@ -99,7 +97,7 @@ void SkipList::Put(int key, const std::string& value) {
       Node* next_level_node = new Node();
       next_level_node->key = key;
       next_level_node->seq = next_seq_;
-      // 상위 인덱스 레벨은 탐색 가속용이므로 value는 비워 둔다.
+      // 상위 인덱스 레벨은 탐색 가속용이므로 value는 비워 둠
       next_level_node->value = "";
       next_level_node->tombstone = false;
       next_level_node->next = nullptr;
@@ -114,7 +112,7 @@ void SkipList::Put(int key, const std::string& value) {
 // SkipList에 서 key에 해당하는 value 찾기. 존재하면 true, 없으면 (tombstone
 // 고려) false 반환. value는 out_value에 저장
 bool SkipList::Get(int key, std::string* out_value) const {
-  // 최신 엔트리를 먼저 찾고, tombstone 여부를 최종 판단으로 사용한다.
+  // 최신 엔트리를 먼저 찾고, tombstone 여부를 최종 판단
   RangeEntry latest;
   if (!GetLatestEntry(key, &latest)) {
     return false;
@@ -129,8 +127,8 @@ bool SkipList::Get(int key, std::string* out_value) const {
 }
 
 bool SkipList::GetLatestEntry(int key, RangeEntry* out_entry) const {
-  // (key, 0) 이상의 첫 노드는 해당 key의 가장 오래된 버전일 수 있다.
-  // 동일 key 구간을 끝까지 보며 최대 seq(최신 버전)를 선택한다.
+  // (key, 0) 이상의 첫 노드는 해당 key의 가장 오래된 버전일 수 있음
+  // -> 동일 key 구간을 끝까지 보며 최대 seq(최신 버전)를 선택함
   Node* x = FindGreaterOrEqual(key, 0, nullptr);
   if (x == nullptr || x->key != key) {
     return false;
@@ -154,11 +152,10 @@ bool SkipList::GetLatestEntry(int key, RangeEntry* out_entry) const {
 
 // SkipList Delete operation. Tombstone으로 삭제 진행
 bool SkipList::Delete(int key) {
-  // 기존 노드를 지우지 않고, tombstone 새 버전을 기록한다.
-  // 이 방식은 LSM 계열의 out-of-place update 모델과 동일한 의미를 가진다.
+  // 기존 노드를 지우지 않고, tombstone 새 버전을 기록
   RangeEntry latest;
   bool existed_non_tombstone =
-      GetLatestEntry(key, &latest) && !latest.tombstone;
+      GetLatestEntry(key, &latest) && !latest.tombstone; //삭제하려는 key가 존재하면서 최신 버전이 tombstone이 아닌 경우 true, 그렇지 않으면 false
 
   std::vector<Node*> update(max_level_, nullptr);
   FindGreaterOrEqual(key, 0, &update);
@@ -189,7 +186,7 @@ bool SkipList::Delete(int key) {
 // SkipList range scan operation. 해당하는 노드를 vector에 모아 반환
 std::vector<std::pair<int, std::string>>
 SkipList::RangeScan(int start_key, int end_key) const {
-  // 내부적으로 tombstone 포함 결과를 받은 뒤, 비삭제 값만 노출한다.
+  // 내부적으로 tombstone 포함 결과를 받은 뒤, 삭제되지 않은 값만 반환
   std::vector<std::pair<int, std::string>> out;
   std::vector<RangeEntry> entries = RangeScanEntries(start_key, end_key);
   for (const auto& e : entries) {
@@ -200,6 +197,7 @@ SkipList::RangeScan(int start_key, int end_key) const {
   return out;
 }
 
+// 범위에 해당하는 노드를 vector에 모아 반환(tombstone 포함)
 std::vector<SkipList::RangeEntry>
 SkipList::RangeScanEntries(int start_key, int end_key) const {
   std::vector<RangeEntry> out;
@@ -208,8 +206,8 @@ SkipList::RangeScanEntries(int start_key, int end_key) const {
     return out;
   }
 
-  // start_key 이상 첫 노드부터 선형 순회.
-  // key별로 가장 큰 seq 하나만 유지한다.
+  // start_key 이상 첫 노드부터 선형 순회
+  // key별로 가장 큰 seq 하나만 유지
   Node* x = FindGreaterOrEqual(start_key, 0, nullptr);
 
   std::map<int, std::pair<int64_t, RangeEntry>> result_map;
@@ -234,12 +232,14 @@ SkipList::RangeScanEntries(int start_key, int end_key) const {
   return out;
 }
 
+// (key, seq) 이상이 처음 나오는 bottom-level 노드를 찾음
+// update가 주어지면 각 레벨에서 직전 노드를 채움
 SkipList::Node* SkipList::FindGreaterOrEqual(int key, int64_t seq,
                                               std::vector<Node*>* update) const {
   Node* x = head_;
   int level = max_level_ - 1;
   
-  // 각 레벨에서 "목표보다 작은 마지막 노드"를 찾고 아래로 내려간다.
+  // 각 레벨에서 목표보다 작은 마지막 노드를 찾고 아래로 내려감
   while (x != nullptr) {
     Node* next = x->next;
     while (next != nullptr && Less(next->key, next->seq, key, seq)) {
@@ -249,12 +249,12 @@ SkipList::Node* SkipList::FindGreaterOrEqual(int key, int64_t seq,
     
     if (update != nullptr && level >= 0 &&
         static_cast<size_t>(level) < update->size()) {
-      // 이 레벨에서의 predecessor 저장.
+      // 이 레벨에서의 predecessor 저장
       (*update)[level] = x;
     }
 
     if (x->down == nullptr) {
-      // bottom 레벨에서 첫 번째 >= (key, seq) 노드.
+      // bottom 레벨에서 첫 번째 >= (key, seq) 노드
       return x->next;
     }
 
@@ -265,8 +265,9 @@ SkipList::Node* SkipList::FindGreaterOrEqual(int key, int64_t seq,
   return nullptr;
 }
 
+
 bool SkipList::Less(int a_key, int64_t a_seq, int b_key, int64_t b_seq) {
-  // key 우선, 동일 key면 seq로 정렬.
+  // key 우선, 동일 key면 seq로 정렬
   if (a_key != b_key) {
     return a_key < b_key;
   }
