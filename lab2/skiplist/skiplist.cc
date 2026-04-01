@@ -153,10 +153,6 @@ bool SkipList::GetLatestEntry(int key, RangeEntry* out_entry) const {
 // SkipList Delete operation. Tombstone으로 삭제 진행
 bool SkipList::Delete(int key) {
   // 기존 노드를 지우지 않고, tombstone 새 버전을 기록
-  RangeEntry latest;
-  bool existed_non_tombstone =
-      GetLatestEntry(key, &latest) && !latest.tombstone; //삭제하려는 key가 존재하면서 최신 버전이 tombstone이 아닌 경우 true, 그렇지 않으면 false
-  
   std::vector<Node*> update(max_level_, nullptr);
   FindGreaterOrEqual(key, 0, &update);
 
@@ -168,6 +164,9 @@ bool SkipList::Delete(int key) {
   Node* down = nullptr;
   for (int i = 0; i < new_level; ++i) {
     Node* node = new Node();
+    if (node == nullptr) {
+      return false; // 메모리 할당 실패
+    }
     node->key = key;
     node->seq = next_seq_;
     node->value = "";
@@ -180,7 +179,7 @@ bool SkipList::Delete(int key) {
   }
 
   ++next_seq_;
-  return existed_non_tombstone;
+  return true; // tombstone 기록 성공
 }
 
 // SkipList range scan operation. 해당하는 노드를 vector에 모아 반환
