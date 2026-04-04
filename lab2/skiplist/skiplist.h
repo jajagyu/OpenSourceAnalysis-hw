@@ -69,7 +69,7 @@ private:
   Node* FindGreaterOrEqual(int key, int64_t seq,
                            std::vector<Node*>* update) const;
 
-  // (key, seq) 쌍의 정렬 비교: key 오름차순, key가 같으면 seq 오름차순
+  // (key, seq) 쌍의 정렬 비교: key 오름차순, key가 같으면 seq 내림차순
   static bool Less(int a_key, int64_t a_seq, int b_key, int64_t b_seq);
 
   // 최상위 헤드 노드

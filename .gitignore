@@ -1,0 +1,5 @@
+*.o
+lab2/skiplist/memdb_bench
+lab2/skiplist/memdb_test
+lab2/bptree/memdb_bench
+lab2/bptree/memdb_test
