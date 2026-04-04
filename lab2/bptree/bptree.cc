@@ -107,6 +107,7 @@ bool BPlusTree::Delete(int key) {
     root_ = root_->children[0];
     old_root->children.clear();
     delete old_root;
+    root_->parent = nullptr;
   }
 
   return deleted;
@@ -247,6 +248,14 @@ bool BPlusTree::DeleteFromNode(Node* node, int key, bool* deleted) {
     }
   }
 
+  if (node != root_ && static_cast<int>(node->keys.size()) < MinKeys(node->is_leaf)) {
+    int self_index = NodeIndexInParent(node);
+    if (self_index >= 0) {
+      FixUnderflow(node, self_index);
+    }
+    return false;
+  }
+
   if (node->children.empty()) {
     return true;
   }
@@ -321,6 +330,20 @@ void BPlusTree::DetachLeafFromChain(Node* target) {
   if (prev != nullptr) {
     prev->next = cur->next;
   }
+}
+
+int BPlusTree::NodeIndexInParent(const Node* node) const {
+  if (node == nullptr || node->parent == nullptr) {
+    return -1;
+  }
+
+  const Node* parent = node->parent;
+  for (size_t i = 0; i < parent->children.size(); ++i) {
+    if (parent->children[i] == node) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
 }
 
 int BPlusTree::ChildIndex(const Node* node, int key) const {

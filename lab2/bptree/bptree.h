@@ -92,6 +92,9 @@ private:
   // leaf 삭제 시 연결 리스트(next)에서 해당 leaf를 분리
   void DetachLeafFromChain(Node* target);
 
+  // 부모 노드에서 child의 위치를 찾음
+  int NodeIndexInParent(const Node* node) const;
+
   // 언더플로우 처리
   void FixUnderflow(Node* child, int child_index);
 
