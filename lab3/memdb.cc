@@ -37,24 +37,128 @@ LSMDB::LSMDB(const MemDBOptions& options)
 void LSMDB::Put(int key, const std::string& value) {
   // DB에 제공되는 key-value 삽입
   // Memtable이 가득 차면 immutable로 바꾸고 Flush 진행
+  
+  // 필요한 바이트 크기 계산
+  size_t entry_bytes = EntryBytes(key, value);
+  
+  // Mutable Memtable에 공간 확보 (필요시 Flush)
+  EnsureMutableCapacity(entry_bytes);
+  
+  // Mutable Memtable에 데이터 추가
+  mutable_->list.PutWithSequence(key, value, next_seq_);
+  mutable_->size_bytes += entry_bytes;
+  next_seq_++;
 }
 
 bool LSMDB::Get(int key, std::string* out_value) const {
   // DB내에 해당하는 key를 찾기
-  return true;
+  // 검색 순서: Mutable -> Immutable -> SSTable
+  
+  // 1. Mutable Memtable에서 먼저 찾기
+  std::string value;
+  bool is_tombstone = false;
+  
+  if (mutable_->list.GetLatest(key, &value, &is_tombstone)) {
+    // Mutable에서 찾음
+    if (is_tombstone) {
+      return false;  // 삭제된 데이터
+    }
+    *out_value = value;
+    return true;
+  }
+  
+  // 2. Immutable Memtables에서 찾기 (역순으로)
+  for (int i = static_cast<int>(immutables_.size()) - 1; i >= 0; --i) {
+    if (immutables_[i]->list.GetLatest(key, &value, &is_tombstone)) {
+      // Immutable에서 찾음
+      if (is_tombstone) {
+        return false;  // 삭제된 데이터
+      }
+      *out_value = value;
+      return true;
+    }
+  }
+  
+  // 3. SSTable에서 찾기 (역순으로, 최신 파일부터)
+  for (int i = static_cast<int>(flushed_files_.size()) - 1; i >= 0; --i) {
+    if (GetFromSSTable(flushed_files_[i], key, &value, &is_tombstone)) {
+      // SSTable에서 찾음
+      if (is_tombstone) {
+        return false;  // 삭제된 데이터
+      }
+      *out_value = value;
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 void LSMDB::Delete(int key) {
   // DB내에 해당하는 key에 대해 tombstone(deletion marker) 삽입
   // Memtable이 가득 차면 immutable로 바꾸고 Flush 진행
+  
+  // Tombstone 삽입: 빈 value와 tombstone 플래그 사용
+  size_t entry_bytes = EntryBytes(key, "");
+  
+  // Mutable Memtable에 공간 확보 (필요시 Flush)
+  EnsureMutableCapacity(entry_bytes);
+  
+  // Mutable Memtable에 tombstone 추가
+  mutable_->list.DeleteWithSequence(key, next_seq_);
+  mutable_->size_bytes += entry_bytes;
+  next_seq_++;
 }
 
 std::vector<std::pair<int, std::string>> LSMDB::RangeScan(int start_key,
                                                           int end_key) const {
 
   // DB내에 key 범위에 해당하는 key-value 쌍을 모두 찾아서 반환
-
+  // 모든 계층(Mutable, Immutable, SSTable)에서 데이터를 수집하고
+  // 최신 seq를 기준으로 중복 제거
+  
   std::vector<std::pair<int, std::string>> out;
+  std::map<int, std::pair<int64_t, std::pair<std::string, bool>>> latest_entries;
+  // key -> (seq, (value, tombstone))
+  
+  // 1. Mutable Memtable에서 범위 스캔
+  auto mutable_entries = mutable_->list.RangeScanLatest(start_key, end_key);
+  for (const auto& entry : mutable_entries) {
+    auto it = latest_entries.find(entry.key);
+    if (it == latest_entries.end() || entry.seq > it->second.first) {
+      latest_entries[entry.key] = {entry.seq, {entry.value, entry.tombstone}};
+    }
+  }
+  
+  // 2. Immutable Memtables에서 범위 스캔 (역순)
+  for (int i = static_cast<int>(immutables_.size()) - 1; i >= 0; --i) {
+    auto immutable_entries = immutables_[i]->list.RangeScanLatest(start_key, end_key);
+    for (const auto& entry : immutable_entries) {
+      auto it = latest_entries.find(entry.key);
+      if (it == latest_entries.end() || entry.seq > it->second.first) {
+        latest_entries[entry.key] = {entry.seq, {entry.value, entry.tombstone}};
+      }
+    }
+  }
+  
+  // 3. SSTable에서 범위 스캔 (역순)
+  for (int i = static_cast<int>(flushed_files_.size()) - 1; i >= 0; --i) {
+    auto sstable_entries = RangeScanSSTable(flushed_files_[i], start_key, end_key);
+    for (const auto& entry : sstable_entries) {
+      auto it = latest_entries.find(entry.key);
+      if (it == latest_entries.end() || entry.seq > it->second.first) {
+        latest_entries[entry.key] = {entry.seq, {entry.value, entry.tombstone}};
+      }
+    }
+  }
+  
+  // 최종 결과 구성: tombstone이 아닌 항목만 반환
+  for (const auto& pair : latest_entries) {
+    if (!pair.second.second.second) {  // !tombstone
+      out.push_back({pair.first, pair.second.second.first});
+    }
+  }
+  
   return out;
 }
 

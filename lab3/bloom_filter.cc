@@ -60,6 +60,11 @@ std::string EncodeBloomFilterBits(const std::vector<uint8_t>& bytes) {
   std::string out;
 
   // bloom filter bytes를 string으로 encoding하는 함수
+  // 각 바이트를 2자리 16진수로 변환하여 문자열로 반환
+  for (uint8_t byte : bytes) {
+    out += NibbleToHex(byte >> 4);    // 상위 4비트
+    out += NibbleToHex(byte & 0x0f);  // 하위 4비트
+  }
 
   return out;
 }
@@ -71,6 +76,15 @@ bool DecodeBloomFilterBits(const std::string& encoded,
   }
 
   // SSTable에 문자열로 저장된 Bloom filter bit array를 hex에서 decoding하는 함수
+  // 2자리씩 읽어서 바이트로 변환
+  out->clear();
+  for (size_t i = 0; i < encoded.size(); i += 2) {
+    uint8_t high, low;
+    if (!HexToNibble(encoded[i], &high) || !HexToNibble(encoded[i + 1], &low)) {
+      return false;
+    }
+    out->push_back((high << 4) | low);
+  }
 
   return true;
 }
@@ -84,6 +98,15 @@ BloomFilter BuildBloomFilterFromKeys(const std::vector<int>& keys,
   }
 
   // key 목록으로부터 Bloom filter를 생성하는 함수
+  // 총 비트 수를 계산하고 BloomFilter 구조 초기화
+  filter.bit_count = keys.size() * bits_per_key;
+  filter.hash_count = hash_count;
+  filter.bits.resize(BloomByteSize(filter.bit_count), 0);
+  
+  // 각 키를 Bloom filter에 추가
+  for (int key : keys) {
+    filter.Add(key);
+  }
 
   return filter;
 }
@@ -98,6 +121,15 @@ void BloomFilter::Add(int key) {
 }
 
 bool BloomFilter::MayContain(int key) const {
+  // 모든 해시 함수에 대해 대응하는 비트가 모두 1이면 포함될 가능성이 있음
+  for (size_t i = 0; i < hash_count; ++i) {
+    uint64_t hash_value = SimpleHash(key, i);
+    size_t bit_index = PositiveModulo(hash_value, bit_count);
+    if (!GetBit(bits, bit_index)) {
+      // 하나라도 0이면 확실히 없음
+      return false;
+    }
+  }
   if (bit_count == 0 || hash_count == 0 || bits.empty()) {
     return true;
   }
