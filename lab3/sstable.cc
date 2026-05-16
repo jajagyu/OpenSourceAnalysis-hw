@@ -45,7 +45,7 @@ bool ReadSSTableHeader(std::ifstream* in, SSTableHeader* header) {
   header->has_metadata = true;
   header->has_bloom_filter = (bloom_enabled != 0);
 
-  // If next line is BLOOM, parse it; otherwise put stream positioned at start of data (we already consumed the line if BLOOM present)
+  // If next line is BLOOM, parse it; otherwise rewind so the caller can read the first data line.
   std::streampos pos = in->tellg();
   if (std::getline(*in, line)) {
     if (line.rfind("BLOOM", 0) == 0) {
@@ -59,6 +59,7 @@ bool ReadSSTableHeader(std::ifstream* in, SSTableHeader* header) {
         if (!DecodeBloomFilterBits(hex_bits, &header->bloom_filter.bits)) {
           return false;
         }
+        header->has_bloom_filter = true;
       }
     } else {
       // not a BLOOM line -> rewind to allow caller to read this data line
@@ -167,8 +168,10 @@ std::vector<SSTableFile> ListSSTables(const std::string& sst_dir,
     file.largest_key = header.largest_key;
     file.oldest_seq = header.oldest_seq;
     file.newest_seq = header.newest_seq;
-    file.has_bloom_filter = header.has_bloom_filter && load_bloom_filter;
-    if (file.has_bloom_filter) file.bloom_filter = header.bloom_filter;
+    file.has_bloom_filter = header.has_bloom_filter;
+    if (load_bloom_filter && header.has_bloom_filter) {
+      file.bloom_filter = header.bloom_filter;
+    }
 
     out.push_back(file);
   }
@@ -202,11 +205,15 @@ SSTableFile WriteSSTable(const std::string& sst_dir, uint64_t file_id,
   std::ofstream out(filepath);
   if (!out) throw std::runtime_error("failed to open SSTable file: " + filepath);
 
-  // META line: write bloom_enabled as 0 (disable bloom writing per request)
-  out << "META " << 0 << " " << header.smallest_key << " " << header.largest_key << " "
+  // META line: bloom_enabled indicates whether BLOOM metadata is present.
+  out << "META " << (write_bloom_filter ? 1 : 0) << " " << header.smallest_key << " " << header.largest_key << " "
       << header.oldest_seq << " " << header.newest_seq << "\n";
 
-  // Do not write BLOOM line (user requested to disable bloom persistence)
+  if (write_bloom_filter) {
+    out << "BLOOM " << header.bloom_filter.bit_count << " "
+        << header.bloom_filter.hash_count << " "
+        << EncodeBloomFilterBits(header.bloom_filter.bits) << "\n";
+  }
 
   // Data lines
   for (const auto& e : sorted) {
@@ -225,7 +232,10 @@ SSTableFile WriteSSTable(const std::string& sst_dir, uint64_t file_id,
   file.largest_key = header.largest_key;
   file.oldest_seq = header.oldest_seq;
   file.newest_seq = header.newest_seq;
-  file.has_bloom_filter = false; // not persisted
+  file.has_bloom_filter = write_bloom_filter;
+  if (write_bloom_filter) {
+    file.bloom_filter = header.bloom_filter;
+  }
   return file;
 }
 
@@ -233,6 +243,10 @@ bool GetFromSSTable(const SSTableFile& file, int key, std::string* value,
                     bool* tombstone) {
   // Quick range check
   if (key < file.smallest_key || key > file.largest_key) return false;
+  if (file.has_bloom_filter && !file.bloom_filter.Empty() &&
+      !file.bloom_filter.MayContain(key)) {
+    return false;
+  }
 
   std::ifstream in(file.path);
   if (!in) return false;

@@ -110,18 +110,26 @@ BloomFilter BuildBloomFilterFromKeys(const std::vector<int>& keys,
 
   return filter;
 }
-
+// 하나의 key를 bloom filter에 등록하는 함수
 void BloomFilter::Add(int key) {
   if (bit_count == 0 || hash_count == 0 || bits.empty()) {
     return;
   }
-
-  // 하나의 key를 bloom filter에 등록하는 함수
-
+  
+  for (size_t i = 0; i < hash_count; ++i) {
+    uint64_t hash_value = SimpleHash(key, i);
+    size_t bit_index = PositiveModulo(hash_value, bit_count);
+    SetBit(&bits, bit_index);
+  }
 }
 
+// 주어진 key에 대해 해당 bloom filter로 검사하는 함수
 bool BloomFilter::MayContain(int key) const {
   // 모든 해시 함수에 대해 대응하는 비트가 모두 1이면 포함될 가능성이 있음
+  if (bit_count == 0 || hash_count == 0 || bits.empty()) {
+    return false;
+  }
+
   for (size_t i = 0; i < hash_count; ++i) {
     uint64_t hash_value = SimpleHash(key, i);
     size_t bit_index = PositiveModulo(hash_value, bit_count);
@@ -130,11 +138,6 @@ bool BloomFilter::MayContain(int key) const {
       return false;
     }
   }
-  if (bit_count == 0 || hash_count == 0 || bits.empty()) {
-    return true;
-  }
-
-  // 주어진 key에 대해 해당 bloom filter로 검사하는 함수
 
   return true;
 }
