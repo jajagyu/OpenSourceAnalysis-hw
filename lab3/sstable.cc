@@ -1,3 +1,8 @@
+/*
+ * ※ 참고 사항
+ * 본 과제에서 기본으로 제공된 스켈레톤 코드의 경우,
+ * 전체적인 시스템 흐름과 내부 동작을 완벽히 이해하기 위해 주석을 추가해 두었습니다.
+ */
 #include "sstable.h"
 
 #include <algorithm>
@@ -21,6 +26,9 @@ struct SSTableHeader {
   BloomFilter bloom_filter;
 };
 
+// SSTable 헤더 메타데이터로부터 Bloom filter 생성
+// 1. 엔트리 목록에서 키만 추출하여 Bloom filter 빌드
+// 2. Bloom filter 메타데이터(비트 수, 해시 함수 개수) 포함
 BloomFilter BuildBloomFilter(const std::vector<SSTableEntry>& entries,
                              size_t bits_per_key, size_t hash_count) {
   std::vector<int> keys;
@@ -29,8 +37,11 @@ BloomFilter BuildBloomFilter(const std::vector<SSTableEntry>& entries,
   return BuildBloomFilterFromKeys(keys, bits_per_key, hash_count);
 }
 
+// SSTable 파일 읽기: 헤더 메타데이터 파싱
+// 1. META 행 읽기: Bloom filter 활성화 여부, 키 범위, seq 범위 추출
+// 2. BLOOM 행 읽기 (있으면): Bloom filter 비트 배열 디코딩
+// 3. 데이터 행 이전까지 포지션 유지
 bool ReadSSTableHeader(std::ifstream* in, SSTableHeader* header) {
-  // Read META line: META <bloom_enabled> <smallest_key> <largest_key> <oldest_seq> <newest_seq>
   std::string line;
   if (!std::getline(*in, line)) return false;
 
@@ -45,7 +56,6 @@ bool ReadSSTableHeader(std::ifstream* in, SSTableHeader* header) {
   header->has_metadata = true;
   header->has_bloom_filter = (bloom_enabled != 0);
 
-  // If next line is BLOOM, parse it; otherwise rewind so the caller can read the first data line.
   std::streampos pos = in->tellg();
   if (std::getline(*in, line)) {
     if (line.rfind("BLOOM", 0) == 0) {
@@ -62,7 +72,6 @@ bool ReadSSTableHeader(std::ifstream* in, SSTableHeader* header) {
         header->has_bloom_filter = true;
       }
     } else {
-      // not a BLOOM line -> rewind to allow caller to read this data line
       in->clear();
       in->seekg(pos);
     }
@@ -70,6 +79,9 @@ bool ReadSSTableHeader(std::ifstream* in, SSTableHeader* header) {
   return true;
 }
 
+// SSTable 데이터 행 파싱
+// 형식: "P key seq value" (Put) 또는 "D key seq" (Delete/tombstone)
+// 각 행에서 연산 타입, 키, seq, 값(있으면)을 추출
 bool ParseSSTableDataLine(const std::string& line, SSTableEntry* entry) {
   std::istringstream iss(line);
   std::string op;
@@ -77,7 +89,6 @@ bool ParseSSTableDataLine(const std::string& line, SSTableEntry* entry) {
 
   if (op == "P") {
     if (!(iss >> entry->key >> entry->seq)) return false;
-    // remaining token(s) are the value (no spaces expected in tests)
     if (!(iss >> entry->value)) entry->value = "";
     entry->tombstone = false;
     return true;
@@ -93,6 +104,8 @@ bool ParseSSTableDataLine(const std::string& line, SSTableEntry* entry) {
   return false;
 }
 
+// SSTable 파일명으로부터 파일 ID 추출
+// 파일명 형식: "sst_<id>.txt" -> id 정수 파싱
 std::optional<uint64_t> ParseSSTFileId(const std::string& name) {
   const std::string prefix = "sst_";
   const std::string suffix = ".txt";
@@ -105,6 +118,10 @@ std::optional<uint64_t> ParseSSTFileId(const std::string& name) {
   return static_cast<uint64_t>(std::stoull(number));
 }
 
+// 엔트리 목록으로부터 SSTable 헤더 메타데이터 생성
+// 1. 모든 엔트리 순회하여 키 범위, seq 범위 계산
+// 2. 최소/최대 키, 최소/최대 seq 값 추출
+// 3. Bloom filter 메타데이터 포함
 SSTableHeader BuildHeaderFromEntries(const std::vector<SSTableEntry>& entries,
                                      bool has_bloom_filter,
                                      BloomFilter bloom_filter) {
@@ -129,17 +146,26 @@ SSTableHeader BuildHeaderFromEntries(const std::vector<SSTableEntry>& entries,
 
 } // namespace
 
-// Public functions
 
+// SSTable 디렉토리 생성 함수
 void EnsureSSTDir(const std::string& sst_dir) {
   std::filesystem::create_directories(sst_dir);
 }
 
+// SSTable 디렉토리 비어있는지 확인 함수
 bool IsSSTDirEmpty(const std::string& sst_dir) {
   EnsureSSTDir(sst_dir);
   return std::filesystem::directory_iterator(sst_dir) == std::filesystem::directory_iterator();
+
 }
 
+
+// SSTable 파일 나열 및 로드 함수
+// 주어진 디렉토리에서 모든 SSTable 파일을 찾아 로드
+// 1. 디렉토리 순회하여 SSTable 파일명(sst_*.txt) 식별
+// 2. 각 파일의 헤더 메타데이터 파싱
+// 3. load_bloom_filter=true면 Bloom filter도 메모리에 로드
+// 4. 파일 ID 순서로 정렬하여 반환
 std::vector<SSTableFile> ListSSTables(const std::string& sst_dir,
                                      bool load_bloom_filter) {
   EnsureSSTDir(sst_dir);
@@ -180,20 +206,25 @@ std::vector<SSTableFile> ListSSTables(const std::string& sst_dir,
   return out;
 }
 
+// SSTable 파일 작성 함수
+// 주어진 엔트리 목록으로 새로운 SSTable 파일 생성
+// 1. 엔트리를 키 오름차순, seq 내림차순으로 정렬
+// 2. 필요시 Bloom filter 생성
+// 3. 헤더 메타데이터 구성
+// 4. 파일 생성: META 행 -> BLOOM 행(선택) -> 데이터 행들
+// 5. SSTableFile 메타데이터 반환
 SSTableFile WriteSSTable(const std::string& sst_dir, uint64_t file_id,
                          const std::vector<SSTableEntry>& entries,
                          bool write_bloom_filter, size_t bloom_bits_per_key,
                          size_t bloom_hash_count) {
   if (entries.empty()) throw std::invalid_argument("cannot write empty SSTable");
 
-  // Sort entries by key asc, seq desc
   std::vector<SSTableEntry> sorted = entries;
   std::sort(sorted.begin(), sorted.end(), [](const SSTableEntry& a, const SSTableEntry& b){
     if (a.key != b.key) return a.key < b.key;
     return a.seq > b.seq;
   });
 
-  // Build bloom filter if requested
   BloomFilter bloom_filter;
   if (write_bloom_filter) bloom_filter = BuildBloomFilter(sorted, bloom_bits_per_key, bloom_hash_count);
 
@@ -205,7 +236,6 @@ SSTableFile WriteSSTable(const std::string& sst_dir, uint64_t file_id,
   std::ofstream out(filepath);
   if (!out) throw std::runtime_error("failed to open SSTable file: " + filepath);
 
-  // META line: bloom_enabled indicates whether BLOOM metadata is present.
   out << "META " << (write_bloom_filter ? 1 : 0) << " " << header.smallest_key << " " << header.largest_key << " "
       << header.oldest_seq << " " << header.newest_seq << "\n";
 
@@ -215,7 +245,6 @@ SSTableFile WriteSSTable(const std::string& sst_dir, uint64_t file_id,
         << EncodeBloomFilterBits(header.bloom_filter.bits) << "\n";
   }
 
-  // Data lines
   for (const auto& e : sorted) {
     if (e.tombstone) {
       out << "D " << e.key << " " << e.seq << "\n";
@@ -239,9 +268,14 @@ SSTableFile WriteSSTable(const std::string& sst_dir, uint64_t file_id,
   return file;
 }
 
+// SSTable에서 키 조회 함수
+// 주어진 키의 최신 버전을 찾아 값과 tombstone 상태 반환
+// 1. 범위 검사: 키가 파일의 [smallest_key, largest_key] 범위 내인지 확인
+// 2. Bloom filter 사전 검사: 있으면 MayContain으로 확인 (빠른 거절)
+// 3. 파일 읽기: 모든 항목 순회하며 해당 키의 최대 seq 찾기
+// 4. 최신 버전 반환 (여러 seq 버전이 있으면 최신만)
 bool GetFromSSTable(const SSTableFile& file, int key, std::string* value,
                     bool* tombstone) {
-  // Quick range check
   if (key < file.smallest_key || key > file.largest_key) return false;
   if (file.has_bloom_filter && !file.bloom_filter.Empty() &&
       !file.bloom_filter.MayContain(key)) {
@@ -271,6 +305,12 @@ bool GetFromSSTable(const SSTableFile& file, int key, std::string* value,
   return found;
 }
 
+// SSTable에서 범위 스캔 함수
+// 주어진 키 범위 [start_key, end_key]의 모든 엔트리 반환 (tombstone 포함)
+// 1. 범위 검사: 범위가 파일 키 범위와 겹치는지 확인
+// 2. 파일 읽기: 해당 범위의 모든 엔트리 수집
+// 3. 키별 최신 버전 추출: 같은 키에 여러 seq 버전이 있으면 최신만
+// 4. 결과 반환 (tombstone 포함, 상위 계층에서 필터링)
 std::vector<SSTableEntry> RangeScanSSTable(const SSTableFile& file,
                                            int start_key, int end_key) {
   std::vector<SSTableEntry> out;

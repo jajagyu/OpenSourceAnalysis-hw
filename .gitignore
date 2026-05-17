@@ -3,3 +3,6 @@ lab2/skiplist/memdb_bench
 lab2/skiplist/memdb_test
 lab2/bptree/memdb_bench
 lab2/bptree/memdb_test
+
+lab3/db_bench
+lab3/db_test
